@@ -214,13 +214,33 @@ namespace SentirseWellApi.Controllers
 
                 // ✅ AUTO-PROCESAR: Marcar todos los turnos como confirmado inmediatamente
                 // (Similar al comportamiento del backend Node.js)
-                var turnoUpdate = Builders<Turno>.Update
-                    .Set(t => t.Estado, "confirmado")
-                    .Set(t => t.PrecioPagado, payment.Monto / turnosIds.Count) // Dividir monto entre turnos
-                    .Set(t => t.UpdatedAt, DateTime.UtcNow);
+                
+                // Obtener los servicios para calcular precios individuales con descuento
+                var serviciosIds = turnos.Select(t => t.ServicioId).ToList();
+                var servicios = await _context.Services
+                    .Find(s => serviciosIds.Contains(s.Id))
+                    .ToListAsync();
 
-                var turnosFilter = Builders<Turno>.Filter.In(t => t.Id, turnosIds);
-                await _context.Turnos.UpdateManyAsync(turnosFilter, turnoUpdate);
+                // Determinar si aplicar descuento (15% para débito)
+                decimal descuentoPorcentaje = createPaymentDto.MetodoPago?.ToLower() == "débito" ? 0.15m : 0;
+
+                // Actualizar cada turno individualmente con su precio correcto
+                foreach (var turno in turnos)
+                {
+                    var servicio = servicios.FirstOrDefault(s => s.Id == turno.ServicioId);
+                    if (servicio?.Precio.HasValue == true)
+                    {
+                        // Calcular precio con descuento individual
+                        decimal precioConDescuento = servicio.Precio.Value * (1 - descuentoPorcentaje);
+                        
+                        var turnoUpdate = Builders<Turno>.Update
+                            .Set(t => t.Estado, "confirmado")
+                            .Set(t => t.PrecioPagado, precioConDescuento)
+                            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+                        await _context.Turnos.UpdateOneAsync(t => t.Id == turno.Id, turnoUpdate);
+                    }
+                }
 
                 _logger.LogInformation("✅ Pago auto-procesado exitosamente: {Id} para {TurnosCount} turnos. Turnos marcados como confirmado: {TurnosIds}", 
                     payment.Id, turnosIds.Count, string.Join(", ", turnosIds));
@@ -291,21 +311,42 @@ namespace SentirseWellApi.Controllers
                 // Si el pago fue exitoso, actualizar el turno
                 if (isSuccessful)
                 {
-                    // Actualizar todos los turnos asociados al pago
-                    var turnoUpdate = Builders<Turno>.Update
-                        .Set(t => t.Estado, "confirmado")
-                        .Set(t => t.PrecioPagado, payment.Monto / payment.TurnosIds.Count) // Dividir monto entre turnos
-                        .Set(t => t.UpdatedAt, DateTime.UtcNow);
+                    // Obtener turnos y servicios para calcular precios individuales
+                    var turnosIds = payment.TurnosIds.Any() ? payment.TurnosIds : 
+                                   (!string.IsNullOrEmpty(payment.TurnoId) ? new List<string> { payment.TurnoId } : new List<string>());
+                    
+                    var turnos = await _context.Turnos
+                        .Find(t => turnosIds.Contains(t.Id))
+                        .ToListAsync();
 
-                    // Actualizar todos los turnos del pago (compatible con estructura antigua y nueva)
-                    var turnosToUpdate = payment.TurnosIds.Any() 
-                        ? Builders<Turno>.Filter.In(t => t.Id, payment.TurnosIds)
-                        : Builders<Turno>.Filter.Eq(t => t.Id, payment.TurnoId);
+                    var serviciosIds = turnos.Select(t => t.ServicioId).ToList();
+                    var servicios = await _context.Services
+                        .Find(s => serviciosIds.Contains(s.Id))
+                        .ToListAsync();
 
-                    await _context.Turnos.UpdateManyAsync(turnosToUpdate, turnoUpdate);
+                    // Determinar si aplicar descuento (15% para débito)
+                    decimal descuentoPorcentaje = payment.MetodoPago?.ToLower() == "débito" ? 0.15m : 0;
+
+                    // Actualizar cada turno individualmente con su precio correcto
+                    foreach (var turno in turnos)
+                    {
+                        var servicio = servicios.FirstOrDefault(s => s.Id == turno.ServicioId);
+                        if (servicio?.Precio.HasValue == true)
+                        {
+                            // Calcular precio con descuento individual
+                            decimal precioConDescuento = servicio.Precio.Value * (1 - descuentoPorcentaje);
+                            
+                            var turnoUpdate = Builders<Turno>.Update
+                                .Set(t => t.Estado, "confirmado")
+                                .Set(t => t.PrecioPagado, precioConDescuento)
+                                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+                            await _context.Turnos.UpdateOneAsync(t => t.Id == turno.Id, turnoUpdate);
+                        }
+                    }
 
                     _logger.LogInformation("Turnos actualizados a confirmado: {TurnosIds}", 
-                        string.Join(", ", payment.TurnosIds.Any() ? payment.TurnosIds : new[] { payment.TurnoId }));
+                        string.Join(", ", turnosIds));
                 }
 
                 // Obtener pago actualizado
