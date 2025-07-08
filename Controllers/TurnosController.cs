@@ -276,7 +276,7 @@ namespace SentirseWellApi.Controllers
                 if (!string.IsNullOrEmpty(updateTurnoDto.Estado))
                     updateBuilder = updateBuilder.Set(t => t.Estado, updateTurnoDto.Estado);
 
-                if (updateTurnoDto.Notas != null)
+                if (!string.IsNullOrWhiteSpace(updateTurnoDto.Notas))
                     updateBuilder = updateBuilder.Set(t => t.Notas, updateTurnoDto.Notas);
 
                 if (updateTurnoDto.PrecioPagado.HasValue)

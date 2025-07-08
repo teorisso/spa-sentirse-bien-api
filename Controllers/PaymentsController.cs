@@ -204,8 +204,9 @@ namespace SentirseWellApi.Controllers
                     Monto = createPaymentDto.Monto,
                     MetodoPago = createPaymentDto.MetodoPago,
                     Estado = "completado", // ✅ Directamente completado para pagos con débito
-                    PaymentDetails = createPaymentDto.PaymentDetails,
-                    Notas = createPaymentDto.Notas,
+                    TransactionId = GenerateTransactionId(), // ✅ Generar ID único automáticamente
+                    PaymentDetails = createPaymentDto.PaymentDetails?.HasValue() == true ? createPaymentDto.PaymentDetails : null,
+                    Notas = !string.IsNullOrWhiteSpace(createPaymentDto.Notas) ? createPaymentDto.Notas : null,
                     CreatedAt = DateTime.UtcNow,
                     ProcessedAt = DateTime.UtcNow // ✅ Procesado inmediatamente
                 };
@@ -295,15 +296,18 @@ namespace SentirseWellApi.Controllers
                     .Set(p => p.Estado, isSuccessful ? "completado" : "fallido")
                     .Set(p => p.ProcessedAt, DateTime.UtcNow);
 
-                if (!string.IsNullOrEmpty(processPaymentDto.TransactionId))
-                    updateBuilder = updateBuilder.Set(p => p.TransactionId, processPaymentDto.TransactionId);
+                // Generar transaction_id si no existe o si se proporciona uno nuevo
+                var transactionId = !string.IsNullOrEmpty(processPaymentDto.TransactionId) 
+                    ? processPaymentDto.TransactionId 
+                    : (string.IsNullOrEmpty(payment.TransactionId) ? GenerateTransactionId() : payment.TransactionId);
+                updateBuilder = updateBuilder.Set(p => p.TransactionId, transactionId);
 
                 if (!string.IsNullOrEmpty(processPaymentDto.AuthorizationCode) && payment.PaymentDetails != null)
                 {
                     updateBuilder = updateBuilder.Set("payment_details.authorization_code", processPaymentDto.AuthorizationCode);
                 }
 
-                if (!string.IsNullOrEmpty(processPaymentDto.Notas))
+                if (!string.IsNullOrWhiteSpace(processPaymentDto.Notas))
                     updateBuilder = updateBuilder.Set(p => p.Notas, processPaymentDto.Notas);
 
                 await _context.Payments.UpdateOneAsync(p => p.Id == processPaymentDto.PaymentId, updateBuilder);
@@ -479,6 +483,17 @@ namespace SentirseWellApi.Controllers
             // Simular una tasa de éxito del 95%
             var random = new Random();
             return random.NextDouble() > 0.05;
+        }
+
+        /// <summary>
+        /// Generar ID único de transacción
+        /// </summary>
+        private string GenerateTransactionId()
+        {
+            // Formato: TXN_YYYYMMDD_HHMMSS_RANDOMSTRING
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+            var randomString = Guid.NewGuid().ToString("N")[..8].ToUpper();
+            return $"TXN_{timestamp}_{randomString}";
         }
 
         /// <summary>

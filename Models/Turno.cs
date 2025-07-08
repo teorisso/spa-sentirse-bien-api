@@ -44,9 +44,11 @@ namespace SentirseWellApi.Models
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         [BsonElement("notas")]
+        [BsonIgnoreIfNull] // No serializar si es null o vacío
         public string? Notas { get; set; }
 
         [BsonElement("precio_pagado")]
+        [BsonIgnoreIfNull] // No serializar si es null
         public decimal? PrecioPagado { get; set; }
 
         // Propiedades de navegación (no se almacenan en BD)
