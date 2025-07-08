@@ -48,28 +48,39 @@ cd spa-sentirse-bien-api
 dotnet restore
 ```
 
-### 3. Configurar secretos de usuario (desarrollo)
+### 3. Configurar archivo `.env` (desarrollo)
+
+La API utiliza la librería **DotNetEnv** para cargar automáticamente las variables de entorno definidas en un archivo `.env` ubicado en la raíz del proyecto.  
+Copia el archivo de ejemplo y completa tus valores:
 
 ```bash
-dotnet user-secrets init
-
-# MongoDB
- dotnet user-secrets set "ConnectionStrings:MongoDB" "<cadena_conexion>"
-
-# JWT
- dotnet user-secrets set "JWT:Key" "<clave_256_bits>"
-
-# Email (Gmail OAuth) – opcional
- dotnet user-secrets set "Email:SenderEmail" "tu-email@gmail.com"
- dotnet user-secrets set "Email:GoogleClientId" "<client_id>"
- dotnet user-secrets set "Email:GoogleClientSecret" "<client_secret>"
- dotnet user-secrets set "Email:GoogleRefreshToken" "<refresh_token>"
-
-# Resend (opcional)
- dotnet user-secrets set "ResendEmail:ApiKey" "<api_key>"
+cp .env.example .env   # o crea .env manualmente
 ```
 
-> **Ventajas de User Secrets**: nunca se suben credenciales al repositorio y la configuración es individual por desarrollador.
+Ejemplo de contenido mínimo:
+
+```env
+# MongoDB
+ConnectionStrings__MongoDB=<cadena_conexion>
+MongoDatabase=sentirseBien
+
+# JWT
+JWT__Key=<clave_256_bits>
+JWT__Issuer=SentirseWellApi
+JWT__Audience=SentirseWellClients
+
+# Email (opcional)
+Email__SenderEmail=tu-email@gmail.com
+Email__GoogleClientId=<client_id>
+Email__GoogleClientSecret=<client_secret>
+Email__GoogleRefreshToken=<refresh_token>
+
+# Resend (opcional)
+ResendEmail__ApiKey=<api_key>
+```
+
+> **Importante**: nunca subas tu archivo `.env` a un repositorio público.  
+> Si prefieres usar `dotnet user-secrets`, la aplicación los reconocerá igualmente.
 
 ### 4. Ejecutar la API
 
