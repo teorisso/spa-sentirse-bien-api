@@ -1,0 +1,6 @@
+@SentirseWellApi_HostAddress = http://localhost:5018
+
+GET {{SentirseWellApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

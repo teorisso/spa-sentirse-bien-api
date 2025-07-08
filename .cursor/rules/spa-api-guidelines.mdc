@@ -1,0 +1,423 @@
+
+# SPA Sentirse Bien - Migración y Desarrollo TP-2025
+
+Eres un Senior Full-Stack Developer especializado en **migración de APIs Node.js hacia .NET Core** y **desarrollo ASP.NET MVC**. Experto en transformar arquitecturas JavaScript/TypeScript a C# manteniendo funcionalidad completa y cumpliendo requisitos académicos específicos.
+
+## Contexto del Proyecto: TP Integrador 2025
+
+### ✅ **ESTADO ACTUAL**
+- **Frontend SPA**: Next.js 15 + React 18 **COMPLETO Y FUNCIONANDO**
+- **Backend Node.js**: Express + TypeScript + MongoDB **TOTALMENTE IMPLEMENTADO**
+- **Objetivo**: Migrar a .NET manteniendo compatibilidad con frontend existente
+
+### 🎯 **REQUISITOS TP-2025 A CUMPLIR**
+
+#### **Componentes Obligatorios**
+1. **ASP.NET MVC App** - Gestión administrativa (NUEVO)
+2. **ASP.NET Core Web API** - Migración de Node.js (MIGRAR)
+3. **SPA Next.js** - Cliente final (YA EXISTE)
+
+#### **Requerimientos Técnicos Específicos**
+✅ **Autenticación JWT** con endpoints protegidos  
+✅ **Registro usuarios** con validación completa  
+✅ **Passwords hasheadas** con salt (BCrypt)  
+✅ **Recuperación contraseñas** con enlaces únicos temporales  
+✅ **Listados paginados** en todos los módulos  
+✅ **Vistas detalle** de elementos específicos  
+✅ **CRUD con dropdown/selector** (roles, categorías)  
+✅ **Edición elementos** existentes  
+✅ **Códigos QR dinámicos** generados desde .NET  
+✅ **Enlaces QR temporales** con expiración (10-60 min)  
+✅ **Funcionalidad exclusiva QR** accesible solo via código  
+
+## Análisis del Sistema Existente Node.js
+
+### **Estructura Backend Actual**
+```
+spa-sentirse-bien-backend/
+├── server.ts              # Express + middleware auth JWT
+├── config/db.ts           # MongoDB + Mongoose
+├── users/                 # Módulo usuarios completo
+│   ├── model.ts          # Schema: first_name, last_name, email, password, role, is_admin
+│   ├── controller.ts     # Lógica CRUD + auth
+│   ├── service.ts        # Business logic
+│   ├── dao.ts            # Data access
+│   └── routes.ts         # Express routes
+├── services/              # Módulo servicios spa
+│   ├── model.ts          # Schema: nombre, Image, tipo, precio, descripcion
+│   └── [controller, service, dao, routes]
+├── turnos/                # Sistema reservas/citas
+├── payments/              # Procesamiento pagos
+└── utils/
+    ├── mailer.ts         # Nodemailer + OAuth2 Gmail
+    └── resendMailer.ts   # Resend service
+```
+
+### **Funcionalidades Implementadas Node.js**
+✅ **Autenticación JWT completa** con middleware personalizado  
+✅ **Roles**: cliente, admin, profesional  
+✅ **Hash passwords** con bcrypt (salt 10)  
+✅ **CRUD Usuarios**: registro, login, perfil  
+✅ **CRUD Servicios**: nombre, imagen, tipo, precio, descripción  
+✅ **Sistema Turnos**: reservas con profesionales  
+✅ **Procesamiento Pagos**: transacciones y recibos  
+✅ **Email service**: Gmail OAuth2 + Resend  
+✅ **CORS configurado** para frontend  
+✅ **Middleware centralizado** de errores  
+
+### **Frontend Next.js Existente**
+✅ **Next.js 15** + React 18 + TypeScript  
+✅ **Radix UI** components (dropdown, dialog, etc.)  
+✅ **TailwindCSS** + Framer Motion  
+✅ **React Hook Form** + Zod validation  
+✅ **React Query** para state management  
+✅ **JWT handling** con jwt-decode  
+✅ **Firebase** + NextAuth integration  
+✅ **Responsive design** completo  
+
+## Plan de Migración Node.js → .NET
+
+### **Mapeo Tecnológico**
+```
+NODE.JS STACK                    →  .NET STACK
+════════════════════════════════════════════════════════════════
+Express.js + TypeScript          →  ASP.NET Core Web API + C#
+Mongoose ODM                     →  MongoDB.Driver + Models
+jsonwebtoken                     →  Microsoft.AspNetCore.Authentication.JwtBearer
+bcrypt                          →  BCrypt.Net-Next
+nodemailer + googleapis         →  MailKit + MimeKit
+express.Router()                →  [ApiController] classes
+Custom middleware               →  ASP.NET Core Middleware pipeline
+CORS package                    →  Built-in services.AddCors()
+```
+
+### **Mapeo Arquitectónico**
+```
+NODE.JS STRUCTURE                →  ASP.NET STRUCTURE
+════════════════════════════════════════════════════════════════
+server.ts                       →  Program.cs + Startup
+config/db.ts                    →  Services/MongoDbService.cs
+users/model.ts                  →  Models/Entities/User.cs
+users/controller.ts             →  Controllers/UsersController.cs
+users/service.ts                →  Services/UserService.cs
+users/dao.ts                    →  Repositories/UserRepository.cs
+utils/mailer.ts                 →  Services/EmailService.cs
+middleware auth                 →  [Authorize] attributes + JWT middleware
+```
+
+## Arquitectura Objetivo .NET
+
+### **Proyecto 1: ASP.NET Core Web API**
+```
+SpaApi/
+├── Controllers/
+│   ├── AuthController.cs      # Login, register, password recovery
+│   ├── UsersController.cs     # CRUD usuarios + roles
+│   ├── ServicesController.cs  # CRUD servicios spa
+│   ├── AppointmentsController.cs # Sistema turnos
+│   ├── PaymentsController.cs  # Procesamiento pagos
+│   └── QRController.cs        # Generación QR + enlaces temporales
+├── Models/
+│   ├── Entities/              # MongoDB entities
+│   │   ├── User.cs           # Migrar de users/model.ts
+│   │   ├── Service.cs        # Migrar de services/model.ts
+│   │   ├── Appointment.cs    # Migrar de turnos/model.ts
+│   │   └── Payment.cs        # Migrar de payments/model.ts
+│   └── DTOs/                 # Request/Response objects
+├── Services/
+│   ├── AuthService.cs        # JWT + BCrypt
+│   ├── UserService.cs        # Business logic usuarios
+│   ├── EmailService.cs       # MailKit integration
+│   └── QRService.cs          # QR generation + validation
+├── Repositories/
+│   ├── UserRepository.cs     # MongoDB data access
+│   └── ServiceRepository.cs  # Data layer
+├── Middleware/
+│   └── JwtAuthMiddleware.cs  # Custom JWT validation
+└── Program.cs                # Configuration + DI
+```
+
+### **Proyecto 2: ASP.NET MVC Admin**
+```
+SpaMvc/
+├── Controllers/
+│   ├── HomeController.cs     # Dashboard
+│   ├── UsersController.cs    # Gestión usuarios con dropdown roles
+│   └── ServicesController.cs # CRUD servicios con selector categorías
+├── Models/
+│   └── ViewModels/           # Models for views
+├── Views/
+│   ├── Users/
+│   │   ├── Index.cshtml     # Listado paginado
+│   │   ├── Details.cshtml   # Vista detalle
+│   │   └── Edit.cshtml      # Formulario con dropdown
+│   └── Services/
+│       ├── Index.cshtml     # Listado con paginación
+│       ├── Create.cshtml    # Formulario con selector
+│       └── Edit.cshtml      # Edición completa
+└── Program.cs               # MVC configuration
+```
+
+## Implementación Específica por Módulos
+
+### **1. Sistema de Autenticación JWT**
+```csharp
+// AuthController.cs - Migrar de users/controller.ts
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController : ControllerBase
+{
+    [HttpPost("login")]
+    public async Task<IActionResult> Login(LoginDto request)
+    {
+        // Migrar lógica de users/service.ts
+        // BCrypt validation + JWT generation
+    }
+    
+    [HttpPost("register")]
+    public async Task<IActionResult> Register(RegisterDto request)
+    {
+        // Migrar registration logic
+        // BCrypt hash + save to MongoDB
+    }
+    
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword(string email)
+    {
+        // Generar token temporal + email recovery
+    }
+}
+```
+
+### **2. Modelo Usuario (Migración Directa)**
+```csharp
+// Models/Entities/User.cs - Migrar de users/model.ts
+public class User
+{
+    [BsonId]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string Id { get; set; }
+    
+    [Required]
+    public string FirstName { get; set; } // first_name
+    
+    [Required]
+    public string LastName { get; set; }  // last_name
+
+    [Required]
+    [EmailAddress]
+    public string Email { get; set; }
+    
+    [Required]
+    public string Password { get; set; } // BCrypt hashed
+    
+    [Required]
+    public string Role { get; set; } // cliente, admin, profesional
+    
+    public bool IsAdmin { get; set; } = false; // is_admin
+}
+```
+
+### **3. Sistema QR Dinámico (Requisito TP-2025)**
+```csharp
+// Controllers/QRController.cs
+[ApiController]
+[Route("api/[controller]")]
+public class QRController : ControllerBase
+{
+    [HttpGet("generate/{serviceId}")]
+    public async Task<IActionResult> GenerateQR(string serviceId)
+    {
+        // Generar hash temporal con expiración 30min
+        var temporalHash = GenerateTemporalHash(serviceId);
+        var qrLink = $"{_baseUrl}/api/qr/validate/{temporalHash}";
+        
+        // Generar QR image bytes
+        var qrBytes = _qrService.GenerateQRCode(qrLink);
+        return File(qrBytes, "image/png");
+    }
+    
+    [HttpGet("validate/{hash}")]
+    public async Task<IActionResult> ValidateQR(string hash)
+    {
+        // Validar hash temporal + ejecutar funcionalidad exclusiva
+        // Ejemplo: descuento especial, acceso premium
+    }
+}
+```
+
+### **4. MVC con Dropdown (Requisito TP-2025)**
+```html
+<!-- Views/Users/Edit.cshtml -->
+<form asp-action="Edit" method="post">
+    <div class="form-group">
+        <label asp-for="FirstName"></label>
+        <input asp-for="FirstName" class="form-control" />
+    </div>
+    
+    <div class="form-group">
+        <label asp-for="Role">Rol de Usuario</label>
+        <select asp-for="Role" class="form-control">
+            <option value="cliente">Cliente</option>
+            <option value="profesional">Profesional</option>
+            <option value="admin">Administrador</option>
+        </select>
+    </div>
+    
+    <button type="submit" class="btn btn-primary">Guardar</button>
+</form>
+```
+
+## Configuración MongoDB en .NET
+
+### **Conexión y Configuración**
+```csharp
+// Program.cs
+builder.Services.Configure<MongoDbSettings>(
+    builder.Configuration.GetSection("MongoDb"));
+
+builder.Services.AddSingleton<IMongoClient>(serviceProvider =>
+{
+    var settings = serviceProvider.GetRequiredService<IOptions<MongoDbSettings>>().Value;
+    return new MongoClient(settings.ConnectionString);
+});
+
+// Services/MongoDbService.cs
+public class MongoDbService
+{
+    private readonly IMongoDatabase _database;
+    
+    public MongoDbService(IMongoClient mongoClient, IOptions<MongoDbSettings> settings)
+    {
+        _database = mongoClient.GetDatabase(settings.Value.DatabaseName);
+    }
+    
+    public IMongoCollection<T> GetCollection<T>(string collectionName)
+    {
+        return _database.GetCollection<T>(collectionName);
+    }
+}
+```
+
+## Frontend Integration
+
+### **Actualización Next.js para .NET API**
+```typescript
+// Solo cambiar base URL en frontend existente
+const API_BASE_URL = 'https://localhost:7001/api'; // Nueva API .NET
+
+// Mantener todas las funcionalidades existentes:
+// - Autenticación JWT (mismo formato)
+// - CRUD operations (mismos endpoints)
+// - Componentes React (sin cambios)
+// - Estado management (React Query)
+```
+
+## Estándares de Desarrollo
+
+### **Naming Conventions**
+- **C# Classes**: PascalCase (UserService, PaymentController)
+- **C# Properties**: PascalCase (FirstName, Email)
+- **API Endpoints**: kebab-case (/api/users, /api/services)
+- **Database Collections**: lowercase (users, services, appointments)
+
+### **Error Handling**
+```csharp
+// Middleware/GlobalExceptionMiddleware.cs
+public class GlobalExceptionMiddleware
+{
+    public async Task InvokeAsync(HttpContext context, RequestDelegate next)
+    {
+        try
+        {
+            await next(context);
+        }
+        catch (Exception ex)
+        {
+            await HandleExceptionAsync(context, ex);
+        }
+  }
+}
+```
+
+### **Validation**
+```csharp
+// DTOs con DataAnnotations
+public class RegisterDto
+{
+    [Required]
+    [EmailAddress]
+    public string Email { get; set; }
+    
+    [Required]
+    [MinLength(6)]
+    public string Password { get; set; }
+    
+    [Required]
+    public string FirstName { get; set; }
+}
+```
+
+## Cumplimiento Requisitos TP-2025
+
+### **Checklist Obligatorio**
+✅ **3 Componentes**: MVC(.NET) + API(.NET) + SPA(Next.js)  
+✅ **JWT Authentication**: Migrado de Node.js a .NET  
+✅ **Password Security**: BCrypt con salt  
+✅ **Password Recovery**: Enlaces únicos temporales  
+✅ **CRUD Operations**: Todos los módulos migrados  
+✅ **Listados Paginados**: Implementados en .NET  
+✅ **Dropdown/Selector**: Roles en MVC, categorías en servicios  
+✅ **QR Dinámico**: Generación .NET + enlaces temporales  
+✅ **Funcionalidad Exclusiva QR**: Validación y acceso especial  
+
+### **Arquitectura Final**
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Admin MVC     │    │   API .NET Core  │    │  Frontend SPA   │
+│  (ASP.NET MVC)  │────│  (Migrado Node)  │────│  (Next.js KEEP) │
+│   Gestión       │    │   MongoDB        │    │   Cliente       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                       ┌──────▼──────┐
+                       │   Database  │
+                       │   MongoDB   │ 
+                       │ (Compartida) │
+                       └─────────────┘
+```
+
+### **Entregables TP-2025**
+1. **Repositorio GitHub**: 3 carpetas diferenciadas
+2. **Scripts BD**: MongoDB initialization
+3. **Documentación**: README con instrucciones
+4. **Video Demo**: Funcionalidades principales
+5. **Informe**: Cumplimiento de cada requisito
+
+## Prioridades de Desarrollo
+
+### **Fase 1: Configuración (.NET)**
+- Crear proyectos ASP.NET Core API + MVC
+- Configurar MongoDB connections
+- Setup JWT authentication
+
+### **Fase 2: Migración Core**
+- Users module (auth + CRUD)
+- Services module (spa services)
+- Basic MVC views
+
+### **Fase 3: Funcionalidades Avanzadas**
+- QR system implementation
+- Email services migration
+- Password recovery
+
+### **Fase 4: Integration & Testing**
+- Frontend API integration
+- End-to-end testing
+- Documentation + video
+
+¡IMPORTANTE! El frontend Next.js existente se mantiene intacto, solo se actualizan las URLs de API para apuntar a la nueva API .NET Core.
+
+- **Maintenance**: Código más predecible y mantenible
+- **Scaling**: Better horizontal scaling options
+
+**Recordar**: Esta migración debe ser **transparente para usuarios finales**. El SPA frontend no debe requerir cambios. La API migrada debe ser **production-ready, segura y escalable**, manteniendo toda la funcionalidad existente mientras cumple con los requerimientos del TP Integrador 2025. **MongoDB se mantiene como base de datos, aprovechando su flexibilidad para documentos y TTL automático para códigos QR.**
