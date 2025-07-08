@@ -4,6 +4,10 @@ using Microsoft.OpenApi.Models;
 using SentirseWellApi.Data;
 using SentirseWellApi.Models;
 using System.Text;
+using DotNetEnv; // Agregar import para DotNetEnv
+
+// Cargar variables de entorno desde archivo .env
+Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
