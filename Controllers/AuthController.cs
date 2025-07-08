@@ -99,6 +99,8 @@ namespace SentirseWellApi.Controllers
         {
             try
             {
+                _logger.LogInformation("Intento de login para email: {Email}", loginDto.Email);
+
                 // Buscar usuario por email
                 var user = await _context.Users
                     .Find(u => u.Email == loginDto.Email.ToLower())
@@ -106,13 +108,55 @@ namespace SentirseWellApi.Controllers
 
                 if (user == null)
                 {
+                    _logger.LogWarning("Usuario no encontrado: {Email}", loginDto.Email);
                     return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(
                         "Credenciales inválidas"));
                 }
 
-                // Verificar contraseña
-                if (!BCrypt.Net.BCrypt.Verify(loginDto.Password, user.Password))
+                bool passwordValid = false;
+
+                // COMPATIBILIDAD: Verificar diferentes tipos de hash de contraseña
+                if (user.Password.StartsWith("$2a$") || user.Password.StartsWith("$2b$") || user.Password.StartsWith("$2y$"))
                 {
+                    // Hash de bcrypt (incluyendo los del backend Node.js anterior)
+                    try
+                    {
+                        passwordValid = BCrypt.Net.BCrypt.Verify(loginDto.Password, user.Password);
+                        _logger.LogInformation("Verificación bcrypt para {Email}: {Valid}", loginDto.Email, passwordValid);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error verificando hash bcrypt para {Email}", loginDto.Email);
+                        
+                        // FALLBACK: Si BCrypt.Net falla, intentar verificación manual
+                        // Esto puede pasar con hashes de versiones diferentes de bcrypt
+                        passwordValid = false;
+                    }
+                }
+                else if (user.Password.Length < 50 && !user.Password.Contains("$"))
+                {
+                    // TEMPORAL: Password en texto plano (migración de datos legacy)
+                    passwordValid = user.Password == loginDto.Password;
+                    _logger.LogWarning("Usuario {Email} tiene password en texto plano - requiere migración", loginDto.Email);
+                    
+                    // Auto-migrar a hash bcrypt
+                    if (passwordValid)
+                    {
+                        var hashedPassword = BCrypt.Net.BCrypt.HashPassword(loginDto.Password);
+                        var update = Builders<User>.Update.Set(u => u.Password, hashedPassword);
+                        await _context.Users.UpdateOneAsync(u => u.Id == user.Id, update);
+                        _logger.LogInformation("Password migrado a hash bcrypt para {Email}", loginDto.Email);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Formato de password no reconocido para {Email}", loginDto.Email);
+                    passwordValid = false;
+                }
+
+                if (!passwordValid)
+                {
+                    _logger.LogWarning("Credenciales inválidas para {Email}", loginDto.Email);
                     return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(
                         "Credenciales inválidas"));
                 }

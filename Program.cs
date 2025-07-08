@@ -17,6 +17,9 @@ builder.Services.AddControllers();
 // Configuración de MongoDB
 builder.Services.AddSingleton<MongoDbContext>();
 
+// Configurar servicios
+builder.Services.AddScoped<SentirseWellApi.Services.IEmailService, SentirseWellApi.Services.EmailService>();
+
 // Configuración de opciones tipadas
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JWT"));
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));

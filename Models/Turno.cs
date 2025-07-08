@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace SentirseWellApi.Models
 {
+    [BsonIgnoreExtraElements] // Ignorar campos adicionales como __v de Mongoose
     public class Turno
     {
         [BsonId]
