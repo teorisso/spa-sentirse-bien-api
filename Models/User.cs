@@ -110,4 +110,18 @@ namespace SentirseWellApi.Models
         [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
         public string NewPassword { get; set; } = string.Empty;
     }
+
+    public class UpdateUserDto
+    {
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        
+        [EmailAddress(ErrorMessage = "El formato del email no es válido")]
+        public string? Email { get; set; }
+        
+        [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
+        public string? Password { get; set; }
+        
+        public string? Role { get; set; }
+    }
 } 
