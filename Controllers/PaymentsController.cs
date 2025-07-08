@@ -132,7 +132,7 @@ namespace SentirseWellApi.Controllers
         }
 
         /// <summary>
-        /// Crear nuevo pago para un turno
+        /// Crear nuevo pago para uno o múltiples turnos
         /// </summary>
         [HttpPost]
         public async Task<ActionResult<ApiResponse<PaymentDto>>> CreatePayment([FromBody] CreatePaymentDto createPaymentDto)
@@ -142,55 +142,93 @@ namespace SentirseWellApi.Controllers
                 var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                 var isAdmin = User.FindFirst("isAdmin")?.Value == "true";
 
-                // Verificar que el turno existe
-                var turno = await _context.Turnos.Find(t => t.Id == createPaymentDto.TurnoId).FirstOrDefaultAsync();
-                if (turno == null)
+                // Obtener la lista de turnos IDs (compatible con ambas estructuras)
+                var turnosIds = createPaymentDto.GetTurnosIds();
+                
+                if (!turnosIds.Any())
                 {
-                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse("Turno no encontrado"));
+                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse("Debe especificar al menos un turno"));
                 }
 
-                // Verificar permisos: solo el cliente del turno o admin puede crear pagos para ese turno
-                if (!isAdmin && turno.ClienteId != userId)
+                // Verificar que todos los turnos existan
+                var turnos = await _context.Turnos
+                    .Find(t => turnosIds.Contains(t.Id))
+                    .ToListAsync();
+
+                if (turnos.Count != turnosIds.Count)
+                {
+                    var turnosNoEncontrados = turnosIds.Except(turnos.Select(t => t.Id)).ToList();
+                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse(
+                        $"Turnos no encontrados: {string.Join(", ", turnosNoEncontrados)}"));
+                }
+
+                // Verificar permisos: todos los turnos deben pertenecer al mismo cliente
+                var clienteIds = turnos.Select(t => t.ClienteId).Distinct().ToList();
+                if (clienteIds.Count > 1)
+                {
+                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse(
+                        "Todos los turnos deben pertenecer al mismo cliente"));
+                }
+
+                var clienteId = clienteIds.First();
+                if (!isAdmin && clienteId != userId)
                 {
                     return Forbid("No puedes crear pagos para turnos de otros usuarios");
                 }
 
-                // Verificar que el turno no esté cancelado
-                if (turno.Estado == "cancelado")
+                // Verificar que ningún turno esté cancelado
+                var turnosCancelados = turnos.Where(t => t.Estado == "cancelado").ToList();
+                if (turnosCancelados.Any())
                 {
-                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse("No se puede pagar un turno cancelado"));
+                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse(
+                        $"No se pueden pagar turnos cancelados: {string.Join(", ", turnosCancelados.Select(t => t.Id))}"));
                 }
 
-                // Verificar que no exista ya un pago completado para este turno
-                var existingPayment = await _context.Payments
-                    .Find(p => p.TurnoId == createPaymentDto.TurnoId && p.Estado == "completado")
-                    .FirstOrDefaultAsync();
+                // Verificar que no existan pagos completados para estos turnos
+                var existingPayments = await _context.Payments
+                    .Find(p => p.TurnosIds.Any(id => turnosIds.Contains(id)) && p.Estado == "completado")
+                    .ToListAsync();
 
-                if (existingPayment != null)
+                if (existingPayments.Any())
                 {
-                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse("Este turno ya tiene un pago completado"));
+                    var turnosPagados = existingPayments.SelectMany(p => p.TurnosIds).Distinct().ToList();
+                    return BadRequest(ApiResponse<PaymentDto>.ErrorResponse(
+                        $"Algunos turnos ya tienen pagos completados: {string.Join(", ", turnosPagados)}"));
                 }
 
                 // Crear pago
                 var payment = new Payment
                 {
-                    TurnoId = createPaymentDto.TurnoId,
-                    ClienteId = turno.ClienteId,
+                    TurnosIds = turnosIds,
+                    ClienteId = clienteId,
                     Monto = createPaymentDto.Monto,
                     MetodoPago = createPaymentDto.MetodoPago,
-                    Estado = "pendiente",
+                    Estado = "completado", // ✅ Directamente completado para pagos con débito
                     PaymentDetails = createPaymentDto.PaymentDetails,
                     Notas = createPaymentDto.Notas,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    ProcessedAt = DateTime.UtcNow // ✅ Procesado inmediatamente
                 };
 
                 await _context.Payments.InsertOneAsync(payment);
 
+                // ✅ AUTO-PROCESAR: Marcar todos los turnos como confirmado inmediatamente
+                // (Similar al comportamiento del backend Node.js)
+                var turnoUpdate = Builders<Turno>.Update
+                    .Set(t => t.Estado, "confirmado")
+                    .Set(t => t.PrecioPagado, payment.Monto / turnosIds.Count) // Dividir monto entre turnos
+                    .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+                var turnosFilter = Builders<Turno>.Filter.In(t => t.Id, turnosIds);
+                await _context.Turnos.UpdateManyAsync(turnosFilter, turnoUpdate);
+
+                _logger.LogInformation("✅ Pago auto-procesado exitosamente: {Id} para {TurnosCount} turnos. Turnos marcados como confirmado: {TurnosIds}", 
+                    payment.Id, turnosIds.Count, string.Join(", ", turnosIds));
+
                 var paymentDto = await MapToPaymentDtoAsync(payment);
-                _logger.LogInformation("Pago creado exitosamente: {Id}", payment.Id);
 
                 return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, 
-                    ApiResponse<PaymentDto>.SuccessResponse(paymentDto, "Pago creado exitosamente"));
+                    ApiResponse<PaymentDto>.SuccessResponse(paymentDto, "Pago creado y procesado exitosamente"));
             }
             catch (Exception ex)
             {
@@ -253,12 +291,21 @@ namespace SentirseWellApi.Controllers
                 // Si el pago fue exitoso, actualizar el turno
                 if (isSuccessful)
                 {
+                    // Actualizar todos los turnos asociados al pago
                     var turnoUpdate = Builders<Turno>.Update
                         .Set(t => t.Estado, "confirmado")
-                        .Set(t => t.PrecioPagado, payment.Monto)
+                        .Set(t => t.PrecioPagado, payment.Monto / payment.TurnosIds.Count) // Dividir monto entre turnos
                         .Set(t => t.UpdatedAt, DateTime.UtcNow);
 
-                    await _context.Turnos.UpdateOneAsync(t => t.Id == payment.TurnoId, turnoUpdate);
+                    // Actualizar todos los turnos del pago (compatible con estructura antigua y nueva)
+                    var turnosToUpdate = payment.TurnosIds.Any() 
+                        ? Builders<Turno>.Filter.In(t => t.Id, payment.TurnosIds)
+                        : Builders<Turno>.Filter.Eq(t => t.Id, payment.TurnoId);
+
+                    await _context.Turnos.UpdateManyAsync(turnosToUpdate, turnoUpdate);
+
+                    _logger.LogInformation("Turnos actualizados a confirmado: {TurnosIds}", 
+                        string.Join(", ", payment.TurnosIds.Any() ? payment.TurnosIds : new[] { payment.TurnoId }));
                 }
 
                 // Obtener pago actualizado
@@ -317,7 +364,12 @@ namespace SentirseWellApi.Controllers
                     .Set(t => t.Estado, "cancelado")
                     .Set(t => t.UpdatedAt, DateTime.UtcNow);
 
-                await _context.Turnos.UpdateOneAsync(t => t.Id == payment.TurnoId, turnoUpdate);
+                // Actualizar todos los turnos del pago (compatible con estructura antigua y nueva)
+                var turnosToUpdate = payment.TurnosIds.Any() 
+                    ? Builders<Turno>.Filter.In(t => t.Id, payment.TurnosIds)
+                    : Builders<Turno>.Filter.Eq(t => t.Id, payment.TurnoId);
+
+                await _context.Turnos.UpdateManyAsync(turnosToUpdate, turnoUpdate);
 
                 var updatedPayment = await _context.Payments.Find(p => p.Id == id).FirstOrDefaultAsync();
                 var paymentDto = await MapToPaymentDtoAsync(updatedPayment!);
@@ -396,7 +448,7 @@ namespace SentirseWellApi.Controllers
             var paymentDto = new PaymentDto
             {
                 Id = payment.Id,
-                TurnoId = payment.TurnoId,
+                TurnosIds = payment.TurnosIds,
                 ClienteId = payment.ClienteId,
                 Monto = payment.Monto,
                 MetodoPago = payment.MetodoPago,
@@ -407,12 +459,17 @@ namespace SentirseWellApi.Controllers
                 Notas = payment.Notas
             };
 
-            // Obtener información del turno
-            var turno = await _context.Turnos.Find(t => t.Id == payment.TurnoId).FirstOrDefaultAsync();
-            if (turno != null)
+            // Obtener información de los turnos (compatible con estructura antigua y nueva)
+            var turnosIds = payment.TurnosIds.Any() ? payment.TurnosIds : 
+                           (!string.IsNullOrEmpty(payment.TurnoId) ? new List<string> { payment.TurnoId } : new List<string>());
+
+            if (turnosIds.Any())
             {
-                // Para el DTO del turno, obtener información básica sin crear dependencia circular
-                paymentDto.Turno = new TurnoDto
+                var turnos = await _context.Turnos
+                    .Find(t => turnosIds.Contains(t.Id))
+                    .ToListAsync();
+
+                paymentDto.Turnos = turnos.Select(turno => new TurnoDto
                 {
                     Id = turno.Id,
                     ClienteId = turno.ClienteId,
@@ -424,7 +481,7 @@ namespace SentirseWellApi.Controllers
                     CreatedAt = turno.CreatedAt,
                     Notas = turno.Notas,
                     PrecioPagado = turno.PrecioPagado
-                };
+                }).ToList();
             }
 
             // Obtener información del cliente

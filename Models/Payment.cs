@@ -11,10 +11,9 @@ namespace SentirseWellApi.Models
         [BsonRepresentation(BsonType.ObjectId)]
         public string? Id { get; set; }
 
-        [BsonElement("turno_id")]
-        [BsonRepresentation(BsonType.ObjectId)]
-        [Required(ErrorMessage = "El turno es requerido")]
-        public string TurnoId { get; set; } = string.Empty;
+        [BsonElement("turnos_ids")]
+        [Required(ErrorMessage = "Los turnos son requeridos")]
+        public List<string> TurnosIds { get; set; } = new List<string>();
 
         [BsonElement("cliente_id")]
         [BsonRepresentation(BsonType.ObjectId)]
@@ -50,10 +49,24 @@ namespace SentirseWellApi.Models
 
         // Propiedades de navegación
         [BsonIgnore]
-        public Turno? Turno { get; set; }
+        public List<Turno>? Turnos { get; set; }
 
         [BsonIgnore]
         public User? Cliente { get; set; }
+
+        // Compatibilidad con estructura antigua (single turno) - SOLO para lectura, no persistir
+        [BsonIgnore] // ⚠️ CRÍTICO: No persistir este campo en MongoDB
+        public string? TurnoId 
+        { 
+            get => TurnosIds.FirstOrDefault();
+            set 
+            { 
+                if (!string.IsNullOrEmpty(value) && !TurnosIds.Contains(value))
+                {
+                    TurnosIds.Add(value);
+                }
+            }
+        }
     }
 
     public class PaymentDetails
@@ -100,7 +113,7 @@ namespace SentirseWellApi.Models
     public class PaymentDto
     {
         public string? Id { get; set; }
-        public string TurnoId { get; set; } = string.Empty;
+        public List<string> TurnosIds { get; set; } = new List<string>();
         public string ClienteId { get; set; } = string.Empty;
         public decimal Monto { get; set; }
         public string MetodoPago { get; set; } = string.Empty;
@@ -111,14 +124,20 @@ namespace SentirseWellApi.Models
         public string? Notas { get; set; }
 
         // Información expandida
-        public TurnoDto? Turno { get; set; }
+        public List<TurnoDto>? Turnos { get; set; }
         public UserDto? Cliente { get; set; }
+
+        // Compatibilidad con estructura antigua
+        public string? TurnoId => TurnosIds.FirstOrDefault();
     }
 
     public class CreatePaymentDto
     {
-        [Required(ErrorMessage = "El turno es requerido")]
-        public string TurnoId { get; set; } = string.Empty;
+        // Soporte para múltiples turnos (nuevo)
+        public List<string>? TurnosIds { get; set; }
+        
+        // Soporte para un solo turno (compatibilidad)
+        public string? TurnoId { get; set; }
 
         [Required(ErrorMessage = "El monto es requerido")]
         [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a 0")]
@@ -129,6 +148,23 @@ namespace SentirseWellApi.Models
 
         public PaymentDetails? PaymentDetails { get; set; }
         public string? Notas { get; set; }
+
+        // Método para obtener la lista final de turnos
+        public List<string> GetTurnosIds()
+        {
+            var turnos = new List<string>();
+            
+            if (TurnosIds != null && TurnosIds.Any())
+            {
+                turnos.AddRange(TurnosIds);
+            }
+            else if (!string.IsNullOrEmpty(TurnoId))
+            {
+                turnos.Add(TurnoId);
+            }
+            
+            return turnos.Distinct().ToList();
+        }
     }
 
     public class ProcessPaymentDto
