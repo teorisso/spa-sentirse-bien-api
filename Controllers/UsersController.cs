@@ -238,5 +238,137 @@ namespace SentirseWellApi.Controllers
                 return StatusCode(500, ApiResponse<UserDto>.ErrorResponse("Error interno del servidor"));
             }
         }
+
+        /// <summary>
+        /// Actualizar usuario por ID (solo admins o el mismo usuario)
+        /// </summary>
+        [HttpPut("{id}")]
+        public async Task<ActionResult<ApiResponse<UserDto>>> UpdateUser(string id, [FromBody] UpdateUserDto updateDto)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                var isAdmin = User.FindFirst("isAdmin")?.Value == "true";
+
+                // Solo admins pueden editar otros usuarios, o el usuario puede editar su propia información
+                if (!isAdmin && userId != id)
+                {
+                    return Forbid("No tienes permisos para editar este usuario");
+                }
+
+                // Validar el modelo
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ApiResponse<UserDto>.ErrorResponse("Datos de entrada inválidos"));
+                }
+
+                // Buscar el usuario
+                var user = await _context.Users.Find(u => u.Id == id).FirstOrDefaultAsync();
+                
+                if (user == null)
+                {
+                    return NotFound(ApiResponse<UserDto>.ErrorResponse("Usuario no encontrado"));
+                }
+
+                // Verificar si el email ya existe (si se está cambiando)
+                if (!string.IsNullOrEmpty(updateDto.Email) && updateDto.Email != user.Email)
+                {
+                    var existingUser = await _context.Users.Find(u => u.Email == updateDto.Email).FirstOrDefaultAsync();
+                    if (existingUser != null)
+                    {
+                        return BadRequest(ApiResponse<UserDto>.ErrorResponse("El email ya está en uso"));
+                    }
+                }
+
+                // Actualizar campos
+                if (!string.IsNullOrEmpty(updateDto.FirstName))
+                    user.FirstName = updateDto.FirstName;
+                
+                if (!string.IsNullOrEmpty(updateDto.LastName))
+                    user.LastName = updateDto.LastName;
+                
+                if (!string.IsNullOrEmpty(updateDto.Email))
+                    user.Email = updateDto.Email;
+
+                // Solo admins pueden cambiar roles
+                if (isAdmin && !string.IsNullOrEmpty(updateDto.Role))
+                    user.Role = updateDto.Role;
+
+                user.UpdatedAt = DateTime.UtcNow;
+
+                // Guardar cambios
+                await _context.Users.ReplaceOneAsync(u => u.Id == id, user);
+
+                var userDto = new UserDto
+                {
+                    Id = user.Id,
+                    FirstName = user.FirstName,
+                    LastName = user.LastName,
+                    Email = user.Email,
+                    Role = user.Role,
+                    IsAdmin = user.IsAdmin,
+                    CreatedAt = user.CreatedAt
+                };
+
+                return Ok(ApiResponse<UserDto>.SuccessResponse(userDto, "Usuario actualizado exitosamente"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al actualizar usuario: {Id}", id);
+                return StatusCode(500, ApiResponse<UserDto>.ErrorResponse("Error interno del servidor"));
+            }
+        }
+
+        /// <summary>
+        /// Eliminar usuario por ID (solo admins)
+        /// </summary>
+        [HttpDelete("{id}")]
+        public async Task<ActionResult<ApiResponse<string>>> DeleteUser(string id)
+        {
+            try
+            {
+                var isAdmin = User.FindFirst("isAdmin")?.Value == "true";
+
+                // Solo admins pueden eliminar usuarios
+                if (!isAdmin)
+                {
+                    return Forbid("No tienes permisos para eliminar usuarios");
+                }
+
+                // Buscar el usuario
+                var user = await _context.Users.Find(u => u.Id == id).FirstOrDefaultAsync();
+                
+                if (user == null)
+                {
+                    return NotFound(ApiResponse<string>.ErrorResponse("Usuario no encontrado"));
+                }
+
+                // No permitir eliminar admins por seguridad
+                if (user.IsAdmin)
+                {
+                    return BadRequest(ApiResponse<string>.ErrorResponse("No se puede eliminar un administrador"));
+                }
+
+                // Verificar si el usuario tiene turnos activos
+                var turnosActivos = await _context.Turnos
+                    .Find(t => (t.ClienteId == id || t.ProfesionalId == id) && t.Estado != "cancelado")
+                    .CountDocumentsAsync();
+
+                if (turnosActivos > 0)
+                {
+                    return BadRequest(ApiResponse<string>.ErrorResponse("No se puede eliminar el usuario porque tiene turnos activos"));
+                }
+
+                // Eliminar el usuario
+                await _context.Users.DeleteOneAsync(u => u.Id == id);
+
+                return Ok(ApiResponse<string>.SuccessResponse("Usuario eliminado exitosamente", "Usuario eliminado exitosamente"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al eliminar usuario: {Id}", id);
+                return StatusCode(500, ApiResponse<string>.ErrorResponse("Error interno del servidor"));
+            }
+        }
     }
 } 
