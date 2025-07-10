@@ -158,4 +158,7 @@ app.MapControllers();
 // Endpoint de health check
 app.MapGet("/health", () => new { Status = "OK", Timestamp = DateTime.UtcNow });
 
+// Configurar puerto específico
+app.Urls.Add("http://localhost:5018");
+
 app.Run();
