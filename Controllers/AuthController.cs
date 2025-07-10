@@ -11,6 +11,7 @@ using BCrypt.Net;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using Google.Apis.Auth;
+using Google.Apis.Auth.OAuth2;
 
 namespace SentirseWellApi.Controllers
 {
@@ -255,6 +256,43 @@ namespace SentirseWellApi.Controllers
             }
         }
 
+        [HttpPost("test-email")]
+        public async Task<ActionResult<ApiResponse<string>>> TestEmail([FromBody] TestEmailDto testEmailDto)
+        {
+            try
+            {
+                _logger.LogInformation("Probando envío de email a: {Email}", testEmailDto.Email);
+                
+                var testUser = new User
+                {
+                    FirstName = "Test",
+                    LastName = "User",
+                    Email = testEmailDto.Email
+                };
+
+                var emailSent = await _emailService.SendPasswordResetAsync(testUser, "test-token-123");
+                
+                if (emailSent)
+                {
+                    _logger.LogInformation("Email de prueba enviado exitosamente a: {Email}", testEmailDto.Email);
+                    return Ok(ApiResponse<string>.SuccessResponse(
+                        "success", "Email de prueba enviado exitosamente"));
+                }
+                else
+                {
+                    _logger.LogError("Error al enviar email de prueba a: {Email}", testEmailDto.Email);
+                    return StatusCode(500, ApiResponse<string>.ErrorResponse(
+                        "Error al enviar email de prueba"));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en prueba de email: {Email}", testEmailDto.Email);
+                return StatusCode(500, ApiResponse<string>.ErrorResponse(
+                    "Error interno del servidor"));
+            }
+        }
+
         [HttpPost("reset-password")]
         public async Task<ActionResult<ApiResponse<string>>> ResetPassword([FromBody] ResetPasswordDto resetPasswordDto)
         {
@@ -329,11 +367,41 @@ namespace SentirseWellApi.Controllers
         {
             try
             {
+                _logger.LogInformation("Iniciando autenticación con Google");
+
                 var clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
-                var payload = await GoogleJsonWebSignature.ValidateAsync(googleAuthDto.IdToken, new GoogleJsonWebSignature.ValidationSettings
+                
+                if (string.IsNullOrEmpty(clientId))
                 {
-                    Audience = new[] { clientId }
-                });
+                    _logger.LogError("GOOGLE_CLIENT_ID no está configurado");
+                    return StatusCode(500, ApiResponse<AuthResponse>.ErrorResponse(
+                        "Error de configuración del servidor"));
+                }
+
+                _logger.LogInformation("Validando token de Google con ClientId: {ClientId}", clientId);
+
+                GoogleJsonWebSignature.Payload payload;
+                try
+                {
+                    payload = await GoogleJsonWebSignature.ValidateAsync(googleAuthDto.IdToken, new GoogleJsonWebSignature.ValidationSettings
+                    {
+                        Audience = new[] { clientId }
+                    });
+                }
+                catch (InvalidJwtException ex)
+                {
+                    _logger.LogError(ex, "Token de Google inválido");
+                    return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(
+                        "Token de Google inválido o expirado"));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error validando token de Google");
+                    return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(
+                        "Error validando credenciales de Google"));
+                }
+
+                _logger.LogInformation("Token de Google válido para email: {Email}", payload.Email);
 
                 // Buscar usuario existente por email
                 var existingUser = await _context.Users
@@ -353,8 +421,8 @@ namespace SentirseWellApi.Controllers
                     // Crear nuevo usuario
                     user = new User
                     {
-                        FirstName = payload.GivenName,
-                        LastName = payload.FamilyName,
+                        FirstName = payload.GivenName ?? "Usuario",
+                        LastName = payload.FamilyName ?? "Google",
                         Email = payload.Email.ToLower(),
                         Password = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()), // Password aleatorio
                         Role = "cliente", // Por defecto
@@ -365,8 +433,15 @@ namespace SentirseWellApi.Controllers
                     await _context.Users.InsertOneAsync(user);
                     _logger.LogInformation("Nuevo usuario creado con Google: {Email}", user.Email);
 
-                    // Enviar email de bienvenida
-                    await _emailService.SendWelcomeEmailAsync(user);
+                    // Enviar email de bienvenida (opcional, no bloquear si falla)
+                    try
+                    {
+                        await _emailService.SendWelcomeEmailAsync(user);
+                    }
+                    catch (Exception emailEx)
+                    {
+                        _logger.LogWarning(emailEx, "Error enviando email de bienvenida para {Email}", user.Email);
+                    }
                 }
 
                 // Generar token JWT
