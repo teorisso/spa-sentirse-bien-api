@@ -20,11 +20,15 @@ namespace SentirseWellApi.Services
         {
             try
             {
-                // Usar variables de entorno del archivo .env
+                _logger.LogInformation("Intentando enviar email a: {Email}", to);
+                
+                // Usar Gmail SMTP directamente
                 var smtpServer = Environment.GetEnvironmentVariable("EMAIL_SMTP_SERVER") ?? "smtp.gmail.com";
                 var smtpPort = int.Parse(Environment.GetEnvironmentVariable("EMAIL_SMTP_PORT") ?? "587");
                 var senderEmail = Environment.GetEnvironmentVariable("EMAIL_SENDER_EMAIL");
                 var senderName = Environment.GetEnvironmentVariable("EMAIL_SENDER_NAME") ?? "Spa Sentirse Bien";
+
+                _logger.LogInformation("Configuración SMTP: Server={Server}, Port={Port}, Sender={Sender}", smtpServer, smtpPort, senderEmail);
 
                 if (string.IsNullOrEmpty(senderEmail))
                 {
@@ -32,9 +36,12 @@ namespace SentirseWellApi.Services
                     return false;
                 }
 
+                var password = await GetEmailPasswordAsync();
+                _logger.LogInformation("Contraseña de aplicación obtenida: {Length} caracteres", password?.Length ?? 0);
+
                 using var client = new SmtpClient(smtpServer, smtpPort)
                 {
-                    Credentials = new NetworkCredential(senderEmail, await GetEmailPasswordAsync()),
+                    Credentials = new NetworkCredential(senderEmail, password),
                     EnableSsl = true
                 };
 
@@ -48,6 +55,7 @@ namespace SentirseWellApi.Services
 
                 mailMessage.To.Add(to);
 
+                _logger.LogInformation("Enviando email...");
                 await client.SendMailAsync(mailMessage);
                 
                 _logger.LogInformation("Email enviado exitosamente a: {Email}", to);
@@ -55,7 +63,46 @@ namespace SentirseWellApi.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error al enviar email a: {Email}", to);
+                _logger.LogError(ex, "Error al enviar email a: {Email}. Error: {Message}", to, ex.Message);
+                return false;
+            }
+        }
+
+        private async Task<bool> SendEmailWithResendAsync(string to, string subject, string body, bool isHtml = false)
+        {
+            try
+            {
+                var resendApiKey = Environment.GetEnvironmentVariable("ResendEmail__ApiKey");
+                var resendFromEmail = Environment.GetEnvironmentVariable("ResendEmail__FromEmail");
+                
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {resendApiKey}");
+                
+                var emailData = new
+                {
+                    from = resendFromEmail,
+                    to = new[] { to },
+                    subject = subject,
+                    html = body
+                };
+                
+                var response = await client.PostAsJsonAsync("https://api.resend.com/emails", emailData);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("Email enviado exitosamente con Resend a: {Email}", to);
+                    return true;
+                }
+                else
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Error enviando email con Resend: {Error}", errorContent);
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al enviar email con Resend a: {Email}", to);
                 return false;
             }
         }
@@ -159,11 +206,11 @@ namespace SentirseWellApi.Services
         private async Task<string> GetEmailPasswordAsync()
         {
             // Usar la contraseña de aplicación de Gmail desde variables de entorno
-            var password = Environment.GetEnvironmentVariable("EMAIL_GOOGLE_CLIENT_SECRET");
+            var password = Environment.GetEnvironmentVariable("EMAIL_APP_PASSWORD");
             
             if (string.IsNullOrEmpty(password))
             {
-                _logger.LogError("EMAIL_GOOGLE_CLIENT_SECRET no está configurado en el archivo .env");
+                _logger.LogError("EMAIL_APP_PASSWORD no está configurado en el archivo .env");
                 throw new InvalidOperationException("Credenciales de email no configuradas");
             }
             
