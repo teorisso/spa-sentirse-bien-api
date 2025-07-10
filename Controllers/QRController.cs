@@ -198,7 +198,7 @@ namespace SentirseWellApi.Controllers
         }
 
         /// <summary>
-        /// Generar QR específico para check-in de turno
+        /// Obtener QR de check-in para turno (automático o existente)
         /// </summary>
         [HttpPost("turno/{turnoId}/checkin")]
         [Authorize]
@@ -219,7 +219,7 @@ namespace SentirseWellApi.Controllers
                 // Verificar permisos
                 if (!isAdmin && turno.ClienteId != userId && turno.ProfesionalId != userId)
                 {
-                    return Forbid("No tienes permisos para generar QR de este turno");
+                    return Forbid("No tienes permisos para ver el QR de este turno");
                 }
 
                 // Verificar que el turno esté confirmado
@@ -228,28 +228,63 @@ namespace SentirseWellApi.Controllers
                     return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse("El turno debe estar confirmado para generar QR de check-in"));
                 }
 
+                // 🚀 NUEVA LÓGICA: Verificar si ya existe un QR válido para este turno
+                var existingQR = await _context.QRCodes
+                    .Find(qr => qr.TurnoId == turnoId && 
+                               qr.Action == "check_in" && 
+                               qr.IsUsed == false && 
+                               qr.ExpiresAt > DateTime.UtcNow)
+                    .FirstOrDefaultAsync();
+
+                if (existingQR != null)
+                {
+                    // Retornar el QR existente válido
+                    var existingResponse = await GenerateQRResponse(existingQR);
+                    _logger.LogInformation("QR existente reutilizado para turno: {TurnoId}", turnoId);
+                    return Ok(ApiResponse<QRCodeResponse>.SuccessResponse(existingResponse, "QR de check-in obtenido"));
+                }
+
+                // 🚀 VERIFICAR VENTANA DE TIEMPO PARA GENERACIÓN AUTOMÁTICA
+                var turnoDateTime = DateTime.Parse($"{turno.Fecha:yyyy-MM-dd} {turno.Hora}");
+                var now = DateTime.Now;
+                var ventanaInicio = turnoDateTime.AddHours(-1); // 1 hora antes
+                var ventanaFin = turnoDateTime.AddHours(1);     // 1 hora después
+
+                if (now < ventanaInicio)
+                {
+                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse($"El QR estará disponible 1 hora antes del turno ({ventanaInicio:dd/MM/yyyy HH:mm})"));
+                }
+
+                if (now > ventanaFin)
+                {
+                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse("El turno ha finalizado, QR ya no disponible"));
+                }
+
+                // Generar nuevo QR automáticamente
                 var createQRDto = new CreateQRCodeDto
                 {
                     Action = "check_in",
                     TurnoId = turnoId,
                     UserId = turno.ClienteId,
-                    ExpirationMinutes = 60, // QR válido por 1 hora
+                    ExpirationMinutes = 60, // QR válido por 60 minutos
                     Data = new Dictionary<string, object>
                     {
                         ["turno_id"] = turnoId,
                         ["cliente_id"] = turno.ClienteId,
                         ["fecha"] = turno.Fecha.ToString("yyyy-MM-dd"),
-                        ["hora"] = turno.Hora
+                        ["hora"] = turno.Hora,
+                        ["generado_automaticamente"] = true,
+                        ["ventana_checkin"] = $"{ventanaInicio:HH:mm} - {ventanaFin:HH:mm}"
                     }
                 };
 
-                // Generar el QR usando el método principal
                 var result = await GenerateQRCode(createQRDto);
+                _logger.LogInformation("QR generado automáticamente para turno: {TurnoId}", turnoId);
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error al generar QR de check-in para turno: {TurnoId}", turnoId);
+                _logger.LogError(ex, "Error al obtener/generar QR de check-in para turno: {TurnoId}", turnoId);
                 return StatusCode(500, ApiResponse<QRCodeResponse>.ErrorResponse("Error interno del servidor"));
             }
         }
@@ -309,6 +344,31 @@ namespace SentirseWellApi.Controllers
                 _logger.LogError(ex, "Error al obtener historial de QR");
                 return StatusCode(500, ApiResponse<string>.ErrorResponse("Error interno del servidor"));
             }
+        }
+
+        /// <summary>
+        /// Generar respuesta QR a partir de un QRCode existente
+        /// </summary>
+        private async Task<QRCodeResponse> GenerateQRResponse(QRCode existingQR)
+        {
+            // Regenerar la imagen QR para el token existente
+            var baseUrl = _configuration["QRCode:BaseUrl"] ?? "https://localhost:7000/api/qr";
+            var qrUrl = $"{baseUrl}/validate/{existingQR.Token}";
+
+            var qrGenerator = new QRCodeGenerator();
+            var qrCodeData = qrGenerator.CreateQrCode(qrUrl, QRCodeGenerator.ECCLevel.Q);
+            var qrCodeBmp = new BitmapByteQRCode(qrCodeData);
+            var qrCodeImageBytes = qrCodeBmp.GetGraphic(20);
+            var qrCodeBase64 = Convert.ToBase64String(qrCodeImageBytes);
+
+            return new QRCodeResponse
+            {
+                QRCodeId = existingQR.Id!,
+                Token = existingQR.Token,
+                QRCodeImageBase64 = qrCodeBase64,
+                QRCodeUrl = qrUrl,
+                ExpiresAt = existingQR.ExpiresAt
+            };
         }
 
         /// <summary>

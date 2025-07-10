@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace SentirseWellApi.Controllers
 {
-    [ApiExplorerSettings(IgnoreApi = true)] // Estas rutas solo devuelven HTML, no forman parte del swagger
+    [ApiExplorerSettings(IgnoreApi = true)]
     public class QrPagesController : Controller
     {
         [HttpGet("/qr-success")]
