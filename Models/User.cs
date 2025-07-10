@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace SentirseWellApi.Models
 {
+    [BsonIgnoreExtraElements] // Ignorar campos adicionales como __v de Mongoose
     public class User
     {
         [BsonId]
@@ -35,6 +36,9 @@ namespace SentirseWellApi.Models
 
         [BsonElement("created_at")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        [BsonElement("updated_at")]
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         [BsonElement("password_reset_token")]
         public string? PasswordResetToken { get; set; }
@@ -108,5 +112,19 @@ namespace SentirseWellApi.Models
         [Required(ErrorMessage = "La nueva contraseña es requerida")]
         [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
         public string NewPassword { get; set; } = string.Empty;
+    }
+
+    public class UpdateUserDto
+    {
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        
+        [EmailAddress(ErrorMessage = "El formato del email no es válido")]
+        public string? Email { get; set; }
+        
+        [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
+        public string? Password { get; set; }
+        
+        public string? Role { get; set; }
     }
 } 

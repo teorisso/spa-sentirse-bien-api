@@ -4,6 +4,10 @@ using Microsoft.OpenApi.Models;
 using SentirseWellApi.Data;
 using SentirseWellApi.Models;
 using System.Text;
+using DotNetEnv; // Agregar import para DotNetEnv
+
+// Cargar variables de entorno desde archivo .env
+Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,6 +16,9 @@ builder.Services.AddControllers();
 
 // Configuración de MongoDB
 builder.Services.AddSingleton<MongoDbContext>();
+
+// Configurar servicios
+builder.Services.AddScoped<SentirseWellApi.Services.IEmailService, SentirseWellApi.Services.EmailService>();
 
 // Configuración de opciones tipadas
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JWT"));
@@ -109,7 +116,7 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 // Configuración del pipeline de requests
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
@@ -150,5 +157,8 @@ app.MapControllers();
 
 // Endpoint de health check
 app.MapGet("/health", () => new { Status = "OK", Timestamp = DateTime.UtcNow });
+
+// Configurar puerto específico
+app.Urls.Add("http://localhost:5018");
 
 app.Run();

@@ -4,3 +4,50 @@ GET {{SentirseWellApi_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+
+# Test registro de usuario nuevo
+POST {{SentirseWellApi_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "firstName": "Prueba",
+  "lastName": "Usuario",
+  "email": "prueba@test.com",
+  "password": "123456",
+  "role": "cliente"
+}
+
+###
+
+# Test login con usuario nuevo
+POST {{SentirseWellApi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "prueba@test.com",
+  "password": "123456"
+}
+
+###
+
+# Test login con usuario existente (password texto plano)
+POST {{SentirseWellApi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "teorisso@sentirsebien.com",
+  "password": "123456"
+}
+
+###
+
+# Test login con usuario hash bcrypt Node.js
+POST {{SentirseWellApi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "anafelicidad@sentirsebien.com",
+  "password": "CONTRASEÑA_ORIGINAL_AQUI"
+}
+
+###

@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace SentirseWellApi.Models
 {
+    [BsonIgnoreExtraElements] // Ignorar campos adicionales como __v de Mongoose
     public class Service
     {
         [BsonId]
@@ -36,6 +37,10 @@ namespace SentirseWellApi.Models
 
         [BsonElement("is_active")]
         public bool IsActive { get; set; } = true;
+
+        // Campo de versión removido ya que [BsonIgnoreExtraElements] maneja esto automáticamente
+        // [BsonElement("__v")]
+        // public int? Version { get; set; }
     }
 
     public class ServiceDto
