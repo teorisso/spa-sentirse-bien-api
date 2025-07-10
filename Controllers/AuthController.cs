@@ -3,11 +3,14 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using SentirseWellApi.Data;
 using SentirseWellApi.Models;
+using SentirseWellApi.Services;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using BCrypt.Net;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using Google.Apis.Auth;
 
 namespace SentirseWellApi.Controllers
 {
@@ -18,15 +21,18 @@ namespace SentirseWellApi.Controllers
         private readonly MongoDbContext _context;
         private readonly JwtSettings _jwtSettings;
         private readonly ILogger<AuthController> _logger;
+        private readonly IEmailService _emailService;
 
         public AuthController(
             MongoDbContext context, 
             IOptions<JwtSettings> jwtSettings,
-            ILogger<AuthController> logger)
+            ILogger<AuthController> logger,
+            IEmailService emailService)
         {
             _context = context;
             _jwtSettings = jwtSettings.Value;
             _logger = logger;
+            _emailService = emailService;
         }
 
         [HttpPost("register")]
@@ -225,13 +231,21 @@ namespace SentirseWellApi.Controllers
                 await _context.Users.UpdateOneAsync(
                     u => u.Id == user.Id, update);
 
-                // TODO: Enviar email con el token de recuperación
-                // El enlace sería algo como: https://frontend.com/reset-password?token={resetToken}
-
-                _logger.LogInformation("Token de recuperación generado para: {Email}", user.Email);
-
-                return Ok(ApiResponse<string>.SuccessResponse(
-                    "success", "Si el email existe, se ha enviado un enlace de recuperación"));
+                // Enviar email con el token de recuperación
+                var emailSent = await _emailService.SendPasswordResetAsync(user, resetToken);
+                
+                if (emailSent)
+                {
+                    _logger.LogInformation("Email de recuperación enviado exitosamente para: {Email}", user.Email);
+                    return Ok(ApiResponse<string>.SuccessResponse(
+                        "success", "Se ha enviado un enlace de recuperación a tu email"));
+                }
+                else
+                {
+                    _logger.LogError("Error al enviar email de recuperación para: {Email}", user.Email);
+                    return StatusCode(500, ApiResponse<string>.ErrorResponse(
+                        "Error al enviar el email de recuperación. Por favor, inténtalo nuevamente."));
+                }
             }
             catch (Exception ex)
             {
@@ -309,5 +323,180 @@ namespace SentirseWellApi.Controllers
             var token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
         }
+
+        [HttpPost("google")]
+        public async Task<ActionResult<ApiResponse<AuthResponse>>> GoogleAuth([FromBody] GoogleAuthDto googleAuthDto)
+        {
+            try
+            {
+                var clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID");
+                var payload = await GoogleJsonWebSignature.ValidateAsync(googleAuthDto.IdToken, new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = new[] { clientId }
+                });
+
+                // Buscar usuario existente por email
+                var existingUser = await _context.Users
+                    .Find(u => u.Email == payload.Email.ToLower())
+                    .FirstOrDefaultAsync();
+
+                User user;
+
+                if (existingUser != null)
+                {
+                    // Usuario existe, actualizar información si es necesario
+                    user = existingUser;
+                    _logger.LogInformation("Usuario existente encontrado: {Email}", user.Email);
+                }
+                else
+                {
+                    // Crear nuevo usuario
+                    user = new User
+                    {
+                        FirstName = payload.GivenName,
+                        LastName = payload.FamilyName,
+                        Email = payload.Email.ToLower(),
+                        Password = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()), // Password aleatorio
+                        Role = "cliente", // Por defecto
+                        IsAdmin = false,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    await _context.Users.InsertOneAsync(user);
+                    _logger.LogInformation("Nuevo usuario creado con Google: {Email}", user.Email);
+
+                    // Enviar email de bienvenida
+                    await _emailService.SendWelcomeEmailAsync(user);
+                }
+
+                // Generar token JWT
+                var token = GenerateJwtToken(user);
+                var expiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.DurationInMinutes);
+
+                var userDto = new UserDto
+                {
+                    Id = user.Id,
+                    FirstName = user.FirstName,
+                    LastName = user.LastName,
+                    Email = user.Email,
+                    Role = user.Role,
+                    IsAdmin = user.IsAdmin,
+                    CreatedAt = user.CreatedAt
+                };
+
+                var authResponse = new AuthResponse
+                {
+                    Token = token,
+                    ExpiresAt = expiresAt,
+                    User = userDto
+                };
+
+                _logger.LogInformation("Autenticación con Google exitosa: {Email}", user.Email);
+
+                return Ok(ApiResponse<AuthResponse>.SuccessResponse(
+                    authResponse, "Autenticación con Google exitosa"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en autenticación con Google");
+                return StatusCode(500, ApiResponse<AuthResponse>.ErrorResponse(
+                    "Error interno del servidor"));
+            }
+        }
+
+        private async Task<GoogleUserInfo?> ValidateGoogleTokenAsync(string idToken)
+        {
+            try
+            {
+                using var httpClient = new HttpClient();
+                
+                // Obtener las claves públicas de Google
+                var keysResponse = await httpClient.GetStringAsync(
+                    "https://www.googleapis.com/oauth2/v3/certs");
+                
+                var keys = JsonSerializer.Deserialize<GoogleKeysResponse>(keysResponse);
+                
+                if (keys?.Keys == null || !keys.Keys.Any())
+                {
+                    _logger.LogError("No se pudieron obtener las claves públicas de Google");
+                    return null;
+                }
+
+                // Validar el token con las claves públicas
+                var tokenHandler = new JwtSecurityTokenHandler();
+                
+                foreach (var key in keys.Keys)
+                {
+                    try
+                    {
+                        var validationParameters = new TokenValidationParameters
+                        {
+                            ValidateIssuer = true,
+                            ValidIssuer = "https://accounts.google.com",
+                            ValidateAudience = true,
+                            ValidAudience = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID"),
+                            ValidateLifetime = true,
+                            IssuerSigningKey = new JsonWebKey(key.N),
+                            ValidateIssuerSigningKey = true
+                        };
+
+                        var principal = tokenHandler.ValidateToken(idToken, validationParameters, out var validatedToken);
+                        
+                        if (validatedToken != null)
+                        {
+                            // Extraer información del usuario del token
+                            var email = principal.FindFirst("email")?.Value;
+                            var name = principal.FindFirst("name")?.Value;
+                            var givenName = principal.FindFirst("given_name")?.Value;
+                            var familyName = principal.FindFirst("family_name")?.Value;
+                            var picture = principal.FindFirst("picture")?.Value;
+                            var emailVerified = principal.FindFirst("email_verified")?.Value == "true";
+
+                            if (!string.IsNullOrEmpty(email))
+                            {
+                                return new GoogleUserInfo
+                                {
+                                    Sub = principal.FindFirst("sub")?.Value ?? "",
+                                    Name = name ?? "",
+                                    GivenName = givenName ?? "",
+                                    FamilyName = familyName ?? "",
+                                    Email = email,
+                                    Picture = picture ?? "",
+                                    EmailVerified = emailVerified
+                                };
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error validando token con clave específica");
+                        continue;
+                    }
+                }
+
+                _logger.LogWarning("No se pudo validar el token de Google con ninguna clave");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validando token de Google");
+                return null;
+            }
+        }
+    }
+
+    public class GoogleKeysResponse
+    {
+        public List<GoogleKey> Keys { get; set; } = new();
+    }
+
+    public class GoogleKey
+    {
+        public string Kid { get; set; } = string.Empty;
+        public string N { get; set; } = string.Empty;
+        public string E { get; set; } = string.Empty;
+        public string Kty { get; set; } = string.Empty;
+        public string Alg { get; set; } = string.Empty;
+        public string Use { get; set; } = string.Empty;
     }
 } 

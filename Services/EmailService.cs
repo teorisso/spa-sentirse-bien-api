@@ -20,10 +20,17 @@ namespace SentirseWellApi.Services
         {
             try
             {
-                var smtpServer = _configuration["Email:SmtpServer"];
-                var smtpPort = int.Parse(_configuration["Email:SmtpPort"] ?? "587");
-                var senderEmail = _configuration["Email:SenderEmail"];
-                var senderName = _configuration["Email:SenderName"];
+                // Usar variables de entorno del archivo .env
+                var smtpServer = Environment.GetEnvironmentVariable("EMAIL_SMTP_SERVER") ?? "smtp.gmail.com";
+                var smtpPort = int.Parse(Environment.GetEnvironmentVariable("EMAIL_SMTP_PORT") ?? "587");
+                var senderEmail = Environment.GetEnvironmentVariable("EMAIL_SENDER_EMAIL");
+                var senderName = Environment.GetEnvironmentVariable("EMAIL_SENDER_NAME") ?? "Spa Sentirse Bien";
+
+                if (string.IsNullOrEmpty(senderEmail))
+                {
+                    _logger.LogError("EMAIL_SENDER_EMAIL no está configurado en el archivo .env");
+                    return false;
+                }
 
                 using var client = new SmtpClient(smtpServer, smtpPort)
                 {
@@ -33,7 +40,7 @@ namespace SentirseWellApi.Services
 
                 var mailMessage = new MailMessage
                 {
-                    From = new MailAddress(senderEmail!, senderName),
+                    From = new MailAddress(senderEmail, senderName),
                     Subject = subject,
                     Body = body,
                     IsBodyHtml = isHtml
@@ -151,9 +158,16 @@ namespace SentirseWellApi.Services
 
         private async Task<string> GetEmailPasswordAsync()
         {
-            // Para OAuth2, necesitarías implementar la lógica de tokens
-            // Por ahora, usar contraseña de aplicación
-            return _configuration["Email:GoogleClientSecret"] ?? "";
+            // Usar la contraseña de aplicación de Gmail desde variables de entorno
+            var password = Environment.GetEnvironmentVariable("EMAIL_GOOGLE_CLIENT_SECRET");
+            
+            if (string.IsNullOrEmpty(password))
+            {
+                _logger.LogError("EMAIL_GOOGLE_CLIENT_SECRET no está configurado en el archivo .env");
+                throw new InvalidOperationException("Credenciales de email no configuradas");
+            }
+            
+            return password;
         }
 
         #region Email Templates
@@ -325,7 +339,8 @@ namespace SentirseWellApi.Services
 
         private string GeneratePasswordResetTemplate(User user, string resetToken)
         {
-            var resetUrl = $"{_configuration["Frontend:BaseUrl"]}/reset-password?token={resetToken}";
+            var frontendBaseUrl = Environment.GetEnvironmentVariable("FRONTEND_BASE_URL") ?? "http://localhost:3000";
+            var resetUrl = $"{frontendBaseUrl}/reset-password?token={resetToken}";
             
             return $@"
 <!DOCTYPE html>

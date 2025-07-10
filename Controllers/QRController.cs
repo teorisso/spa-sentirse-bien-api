@@ -111,19 +111,45 @@ namespace SentirseWellApi.Controllers
 
                 if (qrCode == null)
                 {
-                    return NotFound("Código QR no válido");
+                    _logger.LogWarning("Intento de usar QR inexistente: {Token}", token);
+                    return Redirect($"/qr-error?message={Uri.EscapeDataString("Este código QR no es válido o no existe en el sistema.")}");
                 }
 
                 // Verificar si el QR está expirado
-                if (DateTime.UtcNow > qrCode.ExpiresAt)
+                var nowUtc = DateTime.UtcNow;
+                _logger.LogInformation("Validando QR: {Token} - Now: {Now} UTC - Expires: {Expires} UTC", 
+                    qrCode.Token, nowUtc, qrCode.ExpiresAt);
+                
+                if (nowUtc > qrCode.ExpiresAt)
                 {
-                    return BadRequest("Código QR expirado");
+                    // Si no fue usado, marcar turno como no_realizado
+                    if (!qrCode.IsUsed && !string.IsNullOrEmpty(qrCode.TurnoId))
+                    {
+                        var updateTurno = Builders<Turno>.Update.Set(t => t.Estado, "no_realizado");
+                        await _context.Turnos.UpdateOneAsync(t => t.Id == qrCode.TurnoId, updateTurno);
+                        
+                        // Marcar QR como "procesado" para evitar intentos futuros
+                        var updateQR = Builders<QRCode>.Update
+                            .Set(qr => qr.IsUsed, true)
+                            .Set(qr => qr.UsedAt, DateTime.UtcNow);
+                        await _context.QRCodes.UpdateOneAsync(qr => qr.Id == qrCode.Id, updateQR);
+                    }
+
+                    _logger.LogWarning("QR expirado: {Id} - Now: {Now} > Expires: {Expires}", qrCode.Id, nowUtc, qrCode.ExpiresAt);
+                    
+                    // Convertir hora de expiración a zona Argentina para mostrar
+                    var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
+                    var expiresAtLocal = TimeZoneInfo.ConvertTimeFromUtc(qrCode.ExpiresAt, tz);
+                    var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tz);
+                    
+                    return Redirect($"/qr-error?message={Uri.EscapeDataString($"Este código QR expiró el {expiresAtLocal:dd/MM/yyyy HH:mm} (hora Argentina). Hora actual: {nowLocal:dd/MM/yyyy HH:mm}. El turno ha sido marcado como no realizado.")}");
                 }
 
                 // Verificar si ya fue usado
                 if (qrCode.IsUsed)
                 {
-                    return BadRequest("Código QR ya utilizado");
+                    _logger.LogWarning("Intento de reutilizar QR: {Id} - Usado: {UsedAt}", qrCode.Id, qrCode.UsedAt);
+                    return Redirect($"/qr-error?message={Uri.EscapeDataString($"Este código QR ya fue utilizado el {qrCode.UsedAt:dd/MM/yyyy HH:mm}.")}");
                 }
 
                 // Procesar según el tipo de acción
@@ -198,7 +224,7 @@ namespace SentirseWellApi.Controllers
         }
 
         /// <summary>
-        /// Obtener QR de check-in para turno (automático o existente)
+        /// Obtener QR de check-in para turno (único por turno)
         /// </summary>
         [HttpPost("turno/{turnoId}/checkin")]
         [Authorize]
@@ -228,59 +254,71 @@ namespace SentirseWellApi.Controllers
                     return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse("El turno debe estar confirmado para generar QR de check-in"));
                 }
 
-                // 🚀 NUEVA LÓGICA: Verificar si ya existe un QR válido para este turno
+                // Buscar QR existente para este turno
                 var existingQR = await _context.QRCodes
-                    .Find(qr => qr.TurnoId == turnoId && 
-                               qr.Action == "check_in" && 
-                               qr.IsUsed == false && 
-                               qr.ExpiresAt > DateTime.UtcNow)
+                    .Find(qr => qr.TurnoId == turnoId && qr.Action == "check_in")
                     .FirstOrDefaultAsync();
+
+                // Calcular la expiración correcta antes de verificar si existe QR
+                var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
+                var fechaLocalArg = TimeZoneInfo.ConvertTimeFromUtc(turno.Fecha, tz).Date;
+                var turnoDateTimeLocal = fechaLocalArg + TimeSpan.Parse(turno.Hora);
+                var turnoDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(turnoDateTimeLocal, tz);
+                var correctExpiresAt = turnoDateTimeUtc.AddHours(1);
+                
+                _logger.LogInformation("Cálculo de expiración para turno {TurnoId}: Fecha BD (UTC): {FechaBD}, Hora: {Hora}, Fecha Local Arg: {FechaLocal}, Turno DateTime Local: {TurnoLocal}, Turno DateTime UTC: {TurnoUTC}, Expira en: {Expira}", 
+                    turnoId, turno.Fecha, turno.Hora, fechaLocalArg, turnoDateTimeLocal, turnoDateTimeUtc, correctExpiresAt);
 
                 if (existingQR != null)
                 {
-                    // Retornar el QR existente válido
-                    var existingResponse = await GenerateQRResponse(existingQR);
-                    _logger.LogInformation("QR existente reutilizado para turno: {TurnoId}", turnoId);
-                    return Ok(ApiResponse<QRCodeResponse>.SuccessResponse(existingResponse, "QR de check-in obtenido"));
+                    // Verificar si la expiración actual coincide con la correcta (margen de 1 minuto)
+                    var timeDiff = Math.Abs((existingQR.ExpiresAt - correctExpiresAt).TotalMinutes);
+                    
+                    if (timeDiff <= 1) // Si la diferencia es menor a 1 minuto, reutilizar
+                    {
+                        var existingResponse = await GenerateQRResponse(existingQR);
+                        _logger.LogInformation("QR existente con expiración correcta devuelto para turno: {TurnoId}", turnoId);
+                        return Ok(ApiResponse<QRCodeResponse>.SuccessResponse(existingResponse, "QR de check-in obtenido"));
+                    }
+                    else
+                    {
+                        // QR con expiración incorrecta, eliminarlo para regenerar
+                        await _context.QRCodes.DeleteOneAsync(qr => qr.Id == existingQR.Id);
+                        _logger.LogWarning("QR eliminado por expiración incorrecta. Turno: {TurnoId}, Expiración actual: {Current}, Correcta: {Correct}", 
+                            turnoId, existingQR.ExpiresAt, correctExpiresAt);
+                    }
                 }
 
-                // 🚀 VERIFICAR VENTANA DE TIEMPO PARA GENERACIÓN AUTOMÁTICA
-                var turnoDateTime = DateTime.Parse($"{turno.Fecha:yyyy-MM-dd} {turno.Hora}");
-                var now = DateTime.Now;
-                var ventanaInicio = turnoDateTime.AddHours(-1); // 1 hora antes
-                var ventanaFin = turnoDateTime.AddHours(1);     // 1 hora después
+                // Crear QR único para este turno
+                // Usar la expiración ya calculada
 
-                if (now < ventanaInicio)
+                var token = GenerateSecureToken();
+                var qrCode = new QRCode
                 {
-                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse($"El QR estará disponible 1 hora antes del turno ({ventanaInicio:dd/MM/yyyy HH:mm})"));
-                }
-
-                if (now > ventanaFin)
-                {
-                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse("El turno ha finalizado, QR ya no disponible"));
-                }
-
-                // Generar nuevo QR automáticamente
-                var createQRDto = new CreateQRCodeDto
-                {
-                    Action = "check_in",
-                    TurnoId = turnoId,
+                    Token = token,
                     UserId = turno.ClienteId,
-                    ExpirationMinutes = 60, // QR válido por 60 minutos
+                    TurnoId = turnoId,
+                    Action = "check_in",
                     Data = new Dictionary<string, object>
                     {
                         ["turno_id"] = turnoId,
                         ["cliente_id"] = turno.ClienteId,
                         ["fecha"] = turno.Fecha.ToString("yyyy-MM-dd"),
                         ["hora"] = turno.Hora,
-                        ["generado_automaticamente"] = true,
-                        ["ventana_checkin"] = $"{ventanaInicio:HH:mm} - {ventanaFin:HH:mm}"
-                    }
+                        ["expira_en"] = correctExpiresAt.ToString("dd/MM/yyyy HH:mm")
+                    },
+                    ExpiresAt = correctExpiresAt,
+                    CreatedBy = userId,
+                    CreatedAt = DateTime.UtcNow,
+                    IsUsed = false
                 };
 
-                var result = await GenerateQRCode(createQRDto);
-                _logger.LogInformation("QR generado automáticamente para turno: {TurnoId}", turnoId);
-                return result;
+                await _context.QRCodes.InsertOneAsync(qrCode);
+
+                var response = await GenerateQRResponse(qrCode);
+                _logger.LogInformation("QR único creado para turno: {TurnoId}, expira: {ExpiresAt}", turnoId, correctExpiresAt);
+                
+                return Ok(ApiResponse<QRCodeResponse>.SuccessResponse(response, "QR de check-in generado"));
             }
             catch (Exception ex)
             {

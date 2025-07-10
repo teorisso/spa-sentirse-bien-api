@@ -12,7 +12,12 @@ Env.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 // Configuración de servicios
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.DictionaryKeyPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
 
 // Configuración de MongoDB
 builder.Services.AddSingleton<MongoDbContext>();
@@ -116,7 +121,7 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 // Configuración del pipeline de requests
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
@@ -157,5 +162,8 @@ app.MapControllers();
 
 // Endpoint de health check
 app.MapGet("/health", () => new { Status = "OK", Timestamp = DateTime.UtcNow });
+
+// Configurar puerto específico
+app.Urls.Add("http://localhost:5018");
 
 app.Run();
