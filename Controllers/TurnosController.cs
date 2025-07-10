@@ -241,14 +241,19 @@ namespace SentirseWellApi.Controllers
                 var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                 var isAdmin = User.FindFirst("isAdmin")?.Value == "true";
                 var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+                var userEmail = User.FindFirst(ClaimTypes.Email)?.Value;
+
+                _logger.LogInformation("UpdateTurno - UserId: {UserId}, IsAdmin: {IsAdmin}, Role: {Role}, Email: {Email}", 
+                    userId, isAdmin, userRole, userEmail);
 
                 if (!isAdmin && turno.ClienteId != userId && turno.ProfesionalId != userId)
                 {
+                    _logger.LogWarning("Usuario {UserId} no tiene permisos para modificar turno {TurnoId}", userId, id);
                     return Forbid("No tienes permisos para modificar este turno");
                 }
 
-                // No permitir cambios si el turno ya fue realizado
-                if (turno.Estado == "realizado")
+                // No permitir cambios si el turno ya fue realizado (excepto para admins)
+                if (turno.Estado == "realizado" && !isAdmin)
                 {
                     return BadRequest(ApiResponse<TurnoDto>.ErrorResponse("No se puede modificar un turno ya realizado"));
                 }

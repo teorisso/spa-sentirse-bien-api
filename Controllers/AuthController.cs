@@ -190,7 +190,8 @@ namespace SentirseWellApi.Controllers
                     User = userDto
                 };
 
-                _logger.LogInformation("Usuario logueado exitosamente: {Email}", user.Email);
+                _logger.LogInformation("Usuario logueado exitosamente: {Email}, IsAdmin: {IsAdmin}, Role: {Role}", 
+                    user.Email, user.IsAdmin, user.Role);
 
                 return Ok(ApiResponse<AuthResponse>.SuccessResponse(
                     authResponse, "Login exitoso"));
@@ -330,6 +331,47 @@ namespace SentirseWellApi.Controllers
                 _logger.LogError(ex, "Error al restablecer contraseña");
                 return StatusCode(500, ApiResponse<string>.ErrorResponse(
                     "Error interno del servidor"));
+            }
+        }
+
+        // ENDPOINT TEMPORAL: Verificar y corregir usuario admin
+        [HttpPost("fix-admin")]
+        public async Task<ActionResult<ApiResponse<string>>> FixAdmin()
+        {
+            try
+            {
+                var adminEmail = "anafelicidad@sentirsebien.com";
+                var user = await _context.Users
+                    .Find(u => u.Email == adminEmail)
+                    .FirstOrDefaultAsync();
+
+                if (user == null)
+                {
+                    return NotFound(ApiResponse<string>.ErrorResponse("Usuario admin no encontrado"));
+                }
+
+                _logger.LogInformation("Usuario encontrado: {Email}, IsAdmin: {IsAdmin}, Role: {Role}", 
+                    user.Email, user.IsAdmin, user.Role);
+
+                // Actualizar si no es admin
+                if (!user.IsAdmin || user.Role != "admin")
+                {
+                    var update = Builders<User>.Update
+                        .Set(u => u.IsAdmin, true)
+                        .Set(u => u.Role, "admin");
+                    
+                    await _context.Users.UpdateOneAsync(u => u.Id == user.Id, update);
+                    
+                    _logger.LogInformation("Usuario {Email} actualizado a admin", user.Email);
+                    return Ok(ApiResponse<string>.SuccessResponse("success", "Usuario actualizado a admin"));
+                }
+
+                return Ok(ApiResponse<string>.SuccessResponse("success", "Usuario ya es admin"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error verificando usuario admin");
+                return StatusCode(500, ApiResponse<string>.ErrorResponse("Error interno del servidor"));
             }
         }
 
