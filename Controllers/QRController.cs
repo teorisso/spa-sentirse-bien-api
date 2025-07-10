@@ -254,16 +254,59 @@ namespace SentirseWellApi.Controllers
                     return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse("El turno debe estar confirmado para generar QR de check-in"));
                 }
 
+                // Calcular la fecha/hora del turno y validar ventana de tiempo
+                var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
+                var fechaLocalArg = TimeZoneInfo.ConvertTimeFromUtc(turno.Fecha, tz).Date;
+                var turnoDateTimeLocal = fechaLocalArg + TimeSpan.Parse(turno.Hora);
+                var turnoDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(turnoDateTimeLocal, tz);
+                
+                // Validar ventana de tiempo: 30 minutos antes hasta 1 hora después
+                var now = DateTime.UtcNow;
+                var thirtyMinutesBefore = turnoDateTimeUtc.AddMinutes(-30);
+                var oneHourAfter = turnoDateTimeUtc.AddHours(1);
+                
+                _logger.LogInformation("Validación de ventana de tiempo para turno {TurnoId}: Now: {Now}, Turno: {Turno}, Ventana: {Before} - {After}", 
+                    turnoId, now, turnoDateTimeUtc, thirtyMinutesBefore, oneHourAfter);
+
+                if (now < thirtyMinutesBefore)
+                {
+                    var timeUntilAvailable = thirtyMinutesBefore - now;
+                    var localThirtyBefore = TimeZoneInfo.ConvertTimeFromUtc(thirtyMinutesBefore, tz);
+                    var localTurno = TimeZoneInfo.ConvertTimeFromUtc(turnoDateTimeUtc, tz);
+                    
+                    string mensaje;
+                    if (timeUntilAvailable.TotalDays >= 1)
+                    {
+                        var days = Math.Ceiling(timeUntilAvailable.TotalDays);
+                        mensaje = $"El QR estará disponible {days} día{(days > 1 ? "s" : "")} antes del turno ({localTurno:dd/MM/yyyy HH:mm}).";
+                    }
+                    else if (timeUntilAvailable.TotalHours >= 1)
+                    {
+                        var hours = Math.Ceiling(timeUntilAvailable.TotalHours);
+                        mensaje = $"El QR estará disponible {hours} hora{(hours > 1 ? "s" : "")} antes del turno (a las {localThirtyBefore:HH:mm}).";
+                    }
+                    else
+                    {
+                        var minutes = Math.Ceiling(timeUntilAvailable.TotalMinutes);
+                        mensaje = $"El QR estará disponible en {minutes} minuto{(minutes > 1 ? "s" : "")} (a las {localThirtyBefore:HH:mm}).";
+                    }
+                    
+                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse(mensaje));
+                }
+
+                if (now > oneHourAfter)
+                {
+                    var localTurno = TimeZoneInfo.ConvertTimeFromUtc(turnoDateTimeUtc, tz);
+                    return BadRequest(ApiResponse<QRCodeResponse>.ErrorResponse(
+                        $"El QR para este turno ya expiró. Los QR están disponibles hasta 1 hora después del turno ({localTurno:dd/MM/yyyy HH:mm})."));
+                }
+
                 // Buscar QR existente para este turno
                 var existingQR = await _context.QRCodes
                     .Find(qr => qr.TurnoId == turnoId && qr.Action == "check_in")
                     .FirstOrDefaultAsync();
 
-                // Calcular la expiración correcta antes de verificar si existe QR
-                var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
-                var fechaLocalArg = TimeZoneInfo.ConvertTimeFromUtc(turno.Fecha, tz).Date;
-                var turnoDateTimeLocal = fechaLocalArg + TimeSpan.Parse(turno.Hora);
-                var turnoDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(turnoDateTimeLocal, tz);
+                // Calcular la expiración correcta antes de verificar si existe QR  
                 var correctExpiresAt = turnoDateTimeUtc.AddHours(1);
                 
                 _logger.LogInformation("Cálculo de expiración para turno {TurnoId}: Fecha BD (UTC): {FechaBD}, Hora: {Hora}, Fecha Local Arg: {FechaLocal}, Turno DateTime Local: {TurnoLocal}, Turno DateTime UTC: {TurnoUTC}, Expira en: {Expira}", 
